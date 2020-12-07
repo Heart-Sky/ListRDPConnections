@@ -5,17 +5,30 @@ using System.IO;
 using System.Collections.Generic;
 using System.Diagnostics.Eventing.Reader;
 using System.Xml;
+using System.Linq;
 
 class ListRDPConnections
 {
-    private static RegistryKey rk;
+	private static RegistryKey rk;
 	private static string prefix = @"C:\Users\";
+
+	private class Info
+	{
+		public int num;
+		public string lastTime;
+
+		public Info(int v1, string v2)
+		{
+			num = v1;
+			lastTime = v2;
+		}
+	}
 
 	static void ListRDPOutConnections()
 	{
 		Console.WriteLine("RDP外连:");
 
-        List<string> sids = new List<string>(Registry.Users.GetSubKeyNames());
+		List<string> sids = new List<string>(Registry.Users.GetSubKeyNames());
 		
 		// Load NTUSER.DAT
 		foreach (string dic in Directory.GetDirectories(prefix))
@@ -29,8 +42,8 @@ class ListRDPConnections
 			catch
 			{
 				continue;
-            }
-        }
+			}
+		}
 
 		// Dump RDP Connection History
 		foreach (string sid in sids)
@@ -38,13 +51,13 @@ class ListRDPConnections
 			if (!sid.StartsWith("S-") || sid.EndsWith("Classes") || sid.Length < 10)
 				continue;
 
-            Dictionary<string, string> history = GetRegistryValues(sid);
-            if (history.Count != 0)
+			Dictionary<string, string> history = GetRegistryValues(sid);
+			if (history.Count != 0)
 			{
 				Console.WriteLine($"{sid}:");
 				foreach (var item in history)
 				{
-					Console.WriteLine($"{item.Key}	{item.Value}");
+					Console.WriteLine($"{item.Key}\t{item.Value}");
 				}
 				Console.WriteLine();
 			}
@@ -115,30 +128,26 @@ class ListRDPConnections
 		string querySuccess = "*[System/EventID=21] or *[System/EventID=25]";
 		string queryAll = "*[System/EventID=1149]";
 
-		var historySuccess = ListEventvwrRecords(logTypeSuccess, querySuccess);
-		var historyAll = ListEventvwrRecords(logTypeAll, queryAll, true);
+		var historySuccess = ListEventvwrRecords(logTypeSuccess, querySuccess).OrderByDescending(s => s.Value.num).ToDictionary(p => p.Key, p => p.Value);
+		var historyAll = ListEventvwrRecords(logTypeAll, queryAll, true).OrderByDescending(s => s.Value.num).ToDictionary(p => p.Key, p => p.Value);
 
 		Console.WriteLine("Login Successful:");
-		foreach (string history in historySuccess)
+		foreach (var item in historySuccess)
 		{
-			Console.WriteLine(history);
-			int index = historyAll.IndexOf(history);
-			if (index != -1)
-			{
-				historyAll.RemoveAt(index);
-            }
-        }
+			Console.WriteLine($"{item.Value.lastTime}  {item.Value.num}\t{item.Key}");
+			historyAll.Remove(item.Key);
+		}
 
 		Console.WriteLine("Login Failed:");
-		foreach (string history in historyAll)
+		foreach (var item in historyAll)
 		{
-			Console.WriteLine(history);
-        }
+			Console.WriteLine($"{item.Value.lastTime}  {item.Value.num}\t{item.Key}");
+		}
 	}
 
-	static List<string> ListEventvwrRecords(string logType, string query, bool flag=false)
+	static Dictionary<string, Info> ListEventvwrRecords(string logType, string query, bool flag=false)
 	{
-		List<string> values = new List<string>();
+		Dictionary<string, Info> values = new Dictionary<string, Info>();
 
 		var elQuery = new EventLogQuery(logType, PathType.LogName, query);
 		var elReader = new EventLogReader(elQuery);
@@ -147,7 +156,9 @@ class ListRDPConnections
 		{
 			XmlDocument doc = new XmlDocument();
 			doc.LoadXml(eventInstance.ToXml());
+			XmlNodeList systemData = doc.FirstChild.FirstChild.ChildNodes;
 			XmlNodeList userData = doc.FirstChild.LastChild.FirstChild.ChildNodes;
+			string lastTime = systemData[7].Attributes.Item(0).InnerText.Remove(19);
 			string user = userData[0].InnerText;
 			string address = userData[2].InnerText;
 
@@ -156,11 +167,18 @@ class ListRDPConnections
 				string domain = userData[1].InnerText;
 				user = domain + (domain != "" ? "\\" : "")  + user;
 			}
-			string value = $"{address}	{user}";
+			string value = $"{address}\t{user}";
 
-			if (address != "本地" && !values.Exists(t => t == value))
+			if (address != "本地")
 			{
-				values.Add(value);
+				if (!values.ContainsKey(value))
+				{
+					values.Add(value, new Info(1, lastTime));
+				}
+				else
+				{
+					values[value].num += 1;
+				}
 			}
 		}
 
