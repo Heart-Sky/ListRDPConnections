@@ -12,6 +12,18 @@ class ListRDPConnections
 	private static RegistryKey rk;
 	private static string prefix = @"C:\Users\";
 
+	private class Out
+	{
+		public string port;
+		public string username;
+
+		public Out(string v1, string v2)
+		{
+			port = v1;
+			username = v2;
+		}
+	}
+
 	private class Info
 	{
 		public int num;
@@ -45,27 +57,50 @@ class ListRDPConnections
 			}
 		}
 
-		// Dump RDP Connection History
+		// Dump RDP Connection History From Registry
 		foreach (string sid in sids)
 		{
 			if (!sid.StartsWith("S-") || sid.EndsWith("Classes") || sid.Length < 10)
 				continue;
 
-			Dictionary<string, string> history = GetRegistryValues(sid);
-			if (history.Count != 0)
-			{
-				Console.WriteLine($"{sid}:");
-				foreach (var item in history)
-				{
-					Console.WriteLine($"{item.Key}\t{item.Value}");
-				}
-				Console.WriteLine();
-			}
+			Dictionary<string, Out> history = GetRegistryValues(sid);
+			PrintRDPOutHistory(history, sid);
 
 			if (sid.StartsWith("S-123456789-"))
 			{
 				UnLoadHive(sid);
 			}
+		}
+
+		// Dump RDP Connection History From RDP Files
+		foreach (string dic in Directory.GetDirectories(prefix))
+		{
+			try
+			{
+				foreach (string file in Directory.GetFiles($@"{dic}\Documents\", "*.rdp"))
+				{
+					Dictionary<string, Out> history = GetRdpFileValues(file);
+					PrintRDPOutHistory(history, file);
+				}
+			}
+			catch
+			{
+				continue;
+			}
+		}
+	}
+
+	static void PrintRDPOutHistory(Dictionary<string, Out> values, string sid = "")
+	{
+		if (values.Count != 0)
+		{
+			Console.WriteLine($"{sid}:");
+			foreach (var item in values)
+			{
+				string port = item.Value.port != "" ? ":" + item.Value.port : "";
+				Console.WriteLine($"{item.Key}{port}\t{item.Value.username}");
+			}
+			Console.WriteLine();
 		}
 	}
 
@@ -82,9 +117,9 @@ class ListRDPConnections
 		return new ComputerInfo().OSFullName;
 	}
 
-	static Dictionary<string, string> GetRegistryValues(string sid)
+	static Dictionary<string, Out> GetRegistryValues(string sid)
 	{
-		Dictionary<string, string> values = new Dictionary<string, string>();
+		Dictionary<string, Out> values = new Dictionary<string, Out>();
 		string baseKey = $@"{sid}\Software\Microsoft\Terminal Server Client\";
 
 		try
@@ -93,7 +128,14 @@ class ListRDPConnections
 			rk = Registry.Users.OpenSubKey(baseKey + "Default");
 			foreach (string mru in rk.GetValueNames())
 			{
-				values.Add(rk.GetValue(mru).ToString(), "");
+				string port = "";
+				string value = rk.GetValue(mru).ToString();
+				string address = value.Split(':')[0];
+				if (value.Contains(":"))
+				{
+					port = value.Split(':')[1];
+				}
+				values.Add(address, new Out(port, ""));
 			}
 			rk.Close();
 
@@ -107,9 +149,52 @@ class ListRDPConnections
 				string user = rk.GetValue("UsernameHint").ToString();
 				if (values.ContainsKey(address))
 				{
-					values[address] = user;
+					values[address].username = user;
 				}
 				rk.Close();
+			}
+		}
+		catch
+		{
+		}
+
+		return values;
+	}
+
+	static Dictionary<string, Out> GetRdpFileValues(string file)
+	{
+		Dictionary<string, Out> values = new Dictionary<string, Out>();
+		string line;
+		string addressStr = "full address:s:";
+		string usernameStr = "username:s:";
+		string address = "";
+		string username = "";
+		string port = "";
+
+		try
+		{
+			StreamReader sr = new StreamReader(file);
+			while (sr.Peek() >= 0)
+			{
+				line = sr.ReadLine();
+				if (line.StartsWith(addressStr))
+				{
+					address = line.Replace(addressStr, "");
+				}
+				if (line.StartsWith(usernameStr))
+				{
+					username = line.Replace(usernameStr, "");
+				}
+			}
+						
+			if (address != "")
+			{
+				address = address.Split(':')[0];
+				if (address.Contains(":"))
+				{
+					port = address.Split(':')[1];
+				}
+				values.Add(address, new Out(port, username));
 			}
 		}
 		catch
@@ -188,7 +273,7 @@ class ListRDPConnections
 	static void Main(string[] args)
 	{
 		Console.WriteLine("Author: HeartSky");
-		Console.WriteLine("");
+		Console.WriteLine();
 
 		ListRDPOutConnections();
 		ListRDPInConnections();
